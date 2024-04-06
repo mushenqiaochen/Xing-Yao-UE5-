@@ -1,0 +1,226 @@
+// Include necessary headers
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "Components/BoxComponent.h"
+#include "Kismet/GameplayStatics.h"
+#include "Engine/World.h"
+#include "TestPUC.generated.h"
+
+UCLASS()
+class YOURPROJECT_API ATestPUC : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    ATestPUC();
+
+    UPROPERTY(EditAnywhere)
+    class AShoot* GunScript; // Reference to the Shoot class
+
+    UPROPERTY(EditAnywhere)
+    class AReload* ReloadScript; // Reference to the Reload class
+
+    UPROPERTY(EditAnywhere)
+    class URigidBodyComponent* RB;
+
+    UPROPERTY(EditAnywhere)
+    class UBoxComponent* Collider;
+
+    UPROPERTY(EditAnywhere)
+    class USceneComponent* Player;
+
+    UPROPERTY(EditAnywhere)
+    class USceneComponent* GunContainer;
+
+    UPROPERTY(EditAnywhere)
+    class USceneComponent* FPSCam;
+
+    UPROPERTY(EditAnywhere)
+    class USceneComponent* OriginalPosition; // Assign the OP position in the Editor
+
+    UPROPERTY(EditAnywhere)
+    float PickUpRange;
+
+    UPROPERTY(EditAnywhere)
+    float InitialPickUpDuration = 3.f;
+
+    UPROPERTY(EditAnywhere)
+    float ExtendedPickUpDuration = 5.f;
+
+    UPROPERTY(EditAnywhere)
+    float GunEnableDuration = 0.1f; // Duration for which the gun script is enabled at the start
+
+protected:
+    virtual void BeginPlay() override;
+
+public:
+    virtual void Tick(float DeltaTime) override;
+
+private:
+    bool Equipped;
+    bool SlotFull;
+    bool PickingUp;
+    bool MouseDownProcessed; // Flag to track if mouse down event has been processed during the current pickup process
+    FTimerHandle PickUpTimerHandle;
+
+    void EnableGunScriptForDuration();
+
+    void StartPickUp();
+
+    void ExtendPickUpDuration();
+
+    void PickUp();
+
+    bool IsInRange();
+
+    void SetGunState(bool IsEquipped);
+
+    void Drop();
+};
+
+// Constructor
+ATestPUC::ATestPUC()
+{
+    // Set default values
+    PrimaryActorTick.bCanEverTick = true;
+    Equipped = false;
+    SlotFull = false;
+    PickingUp = false;
+    MouseDownProcessed = false;
+}
+
+// Called when the game starts or when spawned
+void ATestPUC::BeginPlay()
+{
+    Super::BeginPlay();
+
+    // Enable gun script for a short duration at the start
+    EnableGunScriptForDuration();
+}
+
+// Called every frame
+void ATestPUC::Tick(float DeltaTime)
+{
+    Super::Tick(DeltaTime);
+
+    // Check if the player is in range and presses "E" to pick up the gun
+    if (!Equipped && !SlotFull && IsInRange() && GetWorld()->GetFirstPlayerController()->IsInputKeyDown(EKeys::E))
+    {
+        // Start the pickup process
+        StartPickUp();
+    }
+
+    // Check if the player clicks the mouse during the pickup process to extend the duration
+    if (PickingUp && GetWorld()->GetFirstPlayerController()->IsInputKeyDown(EKeys::LeftMouseButton) && !MouseDownProcessed)
+    {
+        ExtendPickUpDuration();
+        MouseDownProcessed = true; // Mark the mouse down event as processed
+    }
+}
+
+// Enable gun script for a short duration at the start
+void ATestPUC::EnableGunScriptForDuration()
+{
+    // Enable gun script
+    GunScript->SetActorEnableCollision(true);
+    GunScript->SetActorHiddenInGame(false);
+    GunScript->SetActorTickEnabled(true);
+    ReloadScript->SetActorTickEnabled(true);
+
+    // Wait for a short duration
+    FTimerDelegate TimerDelegate;
+    TimerDelegate.BindLambda([=]() {
+        // Disable gun script
+        GunScript->SetActorEnableCollision(false);
+        GunScript->SetActorHiddenInGame(true);
+        GunScript->SetActorTickEnabled(false);
+        ReloadScript->SetActorTickEnabled(false);
+    });
+
+    GetWorldTimerManager().SetTimer(PickUpTimerHandle, TimerDelegate, GunEnableDuration, false);
+}
+
+// Start the pickup process
+void ATestPUC::StartPickUp()
+{
+    // Start the pick up timer with the initial duration
+    GetWorldTimerManager().SetTimer(PickUpTimerHandle, this, &ATestPUC::PickUp, InitialPickUpDuration, false);
+    PickingUp = true;
+    MouseDownProcessed = false; // Reset mouse down processed flag
+}
+
+// Extend the pickup duration
+void ATestPUC::ExtendPickUpDuration()
+{
+    // If picking up, restart the timer with the extended duration
+    if (PickingUp)
+    {
+        GetWorldTimerManager().ClearTimer(PickUpTimerHandle);
+        GetWorldTimerManager().SetTimer(PickUpTimerHandle, this, &ATestPUC::PickUp, ExtendedPickUpDuration, false);
+    }
+}
+
+// Pick up the gun
+void ATestPUC::PickUp()
+{
+    // Pick up the gun
+    SetGunState(true);
+
+    // Drop the gun after the duration
+    Drop();
+}
+
+// Check if the player is in range of the gun
+bool ATestPUC::IsInRange()
+{
+    // Check if the player is in range of the gun
+    return FVector::Dist(GetActorLocation(), Player->GetComponentLocation()) <= PickUpRange;
+}
+
+// Set gun state (equipped or not equipped)
+void ATestPUC::SetGunState(bool IsEquipped)
+{
+    Equipped = IsEquipped;
+
+    if (Equipped)
+    {
+        // Make the gun a child of the camera and move it to default position
+        GunScript->AttachToComponent(GunContainer, FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+        GunScript->SetActorRelativeLocation(FVector::ZeroVector);
+        GunScript->SetActorRelativeRotation(FRotator::ZeroRotator);
+        GunScript->SetActorRelativeScale3D(FVector::OneVector);
+
+        // Enable collision, visibility, and ticking
+        GunScript->SetActorEnableCollision(true);
+        GunScript->SetActorHiddenInGame(false);
+        GunScript->SetActorTickEnabled(true);
+
+        // Update slotFull
+        SlotFull = true;
+    }
+    else
+    {
+        // Detach from parent
+        GunScript->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+
+        // Move the gun back to its original position
+        GunScript->SetActorLocation(OriginalPosition->GetComponentLocation());
+        GunScript->SetActorRotation(OriginalPosition->GetComponentRotation());
+
+        // Disable collision, visibility, and ticking
+        GunScript->SetActorEnableCollision(false);
+        GunScript->SetActorHiddenInGame(true);
+        GunScript->SetActorTickEnabled(false);
+
+        // Update slotFull
+        SlotFull = false;
+    }
+}
+
+// Drop the gun
+void ATestPUC::Drop()
+{
+    // Drop the gun
+    SetGunState(false);
+    PickingUp = false;
+}
